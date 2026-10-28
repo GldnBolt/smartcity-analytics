@@ -1,0 +1,7 @@
+# Datos crudos descargados (se recrean con: docker compose run --rm ingesta)
+data/raw/**/*.zip
+data/raw/**/*.csv
+data/raw/**/*.topojson
+data/raw/**/*.part
+# Caché de Python
+__pycache__/

@@ -1,0 +1,4 @@
+# Fin de línea LF en todo el repo (los scripts se montan en contenedores Linux)
+* text=auto eol=lf
+*.pdf binary
+*.zip binary
