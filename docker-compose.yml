@@ -1,0 +1,92 @@
+# SmartCity Analytics - entorno del proyecto
+#
+#   docker compose run --rm ingesta              # 1. descarga los datos abiertos a data/raw/madrid (una vez)
+#   .\cargar_todo.ps1   |   sh cargar_todo.sh    # 2. recrea PostgreSQL y MongoDB desde cero
+#
+# Flujo: datos crudos -> staging -> PostgreSQL (maestros + transporte, fuente de verdad)
+#                     -> MongoDB (lecturas IoT; lee los maestros desde PostgreSQL)
+# Hadoop y Spark se agregan en su fase.
+
+name: smartcity
+
+x-python: &python
+  build: ./docker/python
+  image: smartcity-python
+  profiles: ["carga"]
+  volumes:
+    - .:/app
+  working_dir: /app
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: smartcity-postgres
+    environment:
+      POSTGRES_DB: smartcity
+      POSTGRES_USER: smartcity
+      POSTGRES_PASSWORD: smartcity   # entorno local de desarrollo
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # Crea el esquema la primera vez que se inicializa el volumen
+      - ./postgres/sql/01_esquema.sql:/docker-entrypoint-initdb.d/01_esquema.sql:ro
+      - ./postgres/sql:/sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "smartcity", "-d", "smartcity"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mongo:
+    image: mongo:7.0
+    container_name: smartcity-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./mongodb/scripts:/scripts:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Descarga los datos abiertos reales (Ayuntamiento de Madrid y EMT) a data/raw/madrid/.
+  #   docker compose run --rm ingesta                 # todo (~2,2 GB)
+  #   docker compose run --rm ingesta aire meteo      # solo algunos temas
+  ingesta:
+    <<: *python
+    entrypoint: ["python", "-m", "ingesta.descargar_madrid"]
+    command: []
+
+  # Extrae los archivos crudos a las tablas staging.* de PostgreSQL (la carga la hace 02_carga.sql).
+  extractor_postgres:
+    <<: *python
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PG_DSN: postgresql://smartcity:smartcity@postgres:5432/smartcity
+    command: ["python", "-m", "postgres.cargador.extraer_staging"]
+
+  # Importa lecturas, alertas, eventos e incidentes a MongoDB leyendo los maestros de PostgreSQL.
+  importador:
+    <<: *python
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    environment:
+      PG_DSN: postgresql://smartcity:smartcity@postgres:5432/smartcity
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: smartcity
+      FECHA_INICIO: "2024-01-01"
+      FECHA_FIN: "2025-12-31"
+      SEMILLA: "2026"   # solo afecta a lo simulado (energía y atención de alertas)
+    command: ["python", "-m", "mongodb.importador.cargar_mongo"]
+
+volumes:
+  pg_data:
+  mongo_data:
