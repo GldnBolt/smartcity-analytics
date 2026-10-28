@@ -29,17 +29,24 @@ CREATE TABLE distritos (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     codigo VARCHAR(10) NOT NULL UNIQUE,
     nombre VARCHAR(100) NOT NULL,
+    area VARCHAR(30) NOT NULL CHECK (area IN ('Almendra central', 'Periferia')),
     CHECK (btrim(codigo) <> ''),
     CHECK (btrim(nombre) <> '')
 );
+COMMENT ON COLUMN distritos.area IS
+    'Almendra central: distritos dentro de la M-30 (1 a 7). Periferia: el resto.';
 
+-- Cada ubicacion es un barrio municipal oficial (131): zona que agrupa sensores y paradas.
 CREATE TABLE ubicaciones (
     id_ubicacion BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    codigo VARCHAR(10) NOT NULL UNIQUE CHECK (btrim(codigo) <> ''),
     nombre_zona VARCHAR(100) NOT NULL CHECK (btrim(nombre_zona) <> ''),
     id_distrito BIGINT NOT NULL REFERENCES distritos(id) ON DELETE RESTRICT,
     latitud NUMERIC(9,6) NOT NULL CHECK (latitud BETWEEN -90 AND 90),
     longitud NUMERIC(9,6) NOT NULL CHECK (longitud BETWEEN -180 AND 180)
 );
+COMMENT ON TABLE ubicaciones IS
+    'Barrios municipales de Madrid (geoportal). codigo = COD_BAR oficial; latitud/longitud = centroide.';
 
 CREATE TABLE usuarios (
     id_usuario BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -71,8 +78,16 @@ CREATE TABLE sensores (
     id_ubicacion BIGINT NOT NULL
         REFERENCES ubicaciones(id_ubicacion) ON DELETE RESTRICT,
     id_organismo BIGINT NOT NULL
-        REFERENCES organismos(id_organismo) ON DELETE RESTRICT
+        REFERENCES organismos(id_organismo) ON DELETE RESTRICT,
+    latitud NUMERIC(9,6) NOT NULL CHECK (latitud BETWEEN -90 AND 90),
+    longitud NUMERIC(9,6) NOT NULL CHECK (longitud BETWEEN -180 AND 180),
+    fuente_datos VARCHAR(10) NOT NULL DEFAULT 'real'
+        CHECK (fuente_datos IN ('real', 'sintetico'))
 );
+COMMENT ON COLUMN sensores.latitud IS
+    'Posicion exacta del sensor; id_ubicacion es el barrio que la contiene.';
+COMMENT ON COLUMN sensores.fuente_datos IS
+    'sintetico: el sensor no tiene dato abierto y sus mediciones se modelan (energia).';
 
 CREATE TABLE variables (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -84,15 +99,18 @@ CREATE TABLE variables (
 );
 
 CREATE TABLE umbrales (
-    id_variable BIGINT PRIMARY KEY REFERENCES variables(id) ON DELETE RESTRICT,
+    id_variable BIGINT NOT NULL REFERENCES variables(id) ON DELETE RESTRICT,
+    periodo VARCHAR(10) NOT NULL CHECK (periodo IN ('horario', 'diario', 'mensual')),
     advertencia NUMERIC(18,6),
     critico NUMERIC(18,6),
+    referencia TEXT NOT NULL CHECK (btrim(referencia) <> ''),
+    PRIMARY KEY (id_variable, periodo),
     CHECK (advertencia IS NOT NULL OR critico IS NOT NULL),
     CHECK (advertencia <> 'NaN'::NUMERIC AND critico <> 'NaN'::NUMERIC),
     CHECK (advertencia <= critico)
 );
 COMMENT ON TABLE umbrales IS
-    'Umbrales superiores del promedio diario en la unidad de variables. No son limites legales por defecto. NULL significa nivel no definido.';
+    'Umbrales superiores por variable y periodo de agregacion, en la unidad de variables. horario: lo usa MongoDB para alertas sobre lecturas horarias; diario: se compara con mediciones_diarias; mensual: datos mensuales. referencia indica la norma o el criterio. NULL significa nivel no definido.';
 
 CREATE TABLE mediciones_diarias (
     id_sensor BIGINT NOT NULL REFERENCES sensores(id_sensor) ON DELETE RESTRICT,
@@ -186,7 +204,7 @@ END;
 $$;
 SELECT crear_particiones_anuales(2024, 2027);
 
--- Indices de FK y filtros. Las PK/UNIQUE ya cubren: umbrales.id_variable,
+-- Indices de FK y filtros. Las PK/UNIQUE ya cubren: umbrales(id_variable, periodo),
 -- variables.tipo_sensor, ruta_parada.id_ruta, mediciones_diarias.id_sensor
 -- y demanda_ruta(id_ruta, fecha). Evitar indices identicos redundantes.
 CREATE INDEX idx_ubicaciones_distrito ON ubicaciones(id_distrito);
@@ -251,8 +269,9 @@ CREATE VIEW vw_resumen_sensores AS
 SELECT s.id_sensor, s.codigo, s.nombre AS nombre_sensor, s.tipo_sensor,
        c.id_categoria, c.nombre_categoria, s.fecha_instalacion,
        EXTRACT(YEAR FROM s.fecha_instalacion)::INTEGER AS anio_instalacion,
-       s.estado, u.id_ubicacion, u.nombre_zona, u.latitud, u.longitud,
-       d.id AS id_distrito, d.codigo AS codigo_distrito, d.nombre AS distrito,
+       s.estado, s.fuente_datos, s.latitud, s.longitud,
+       u.id_ubicacion, u.codigo AS codigo_barrio, u.nombre_zona,
+       d.id AS id_distrito, d.codigo AS codigo_distrito, d.nombre AS distrito, d.area,
        o.id_organismo, o.nombre AS nombre_organismo,
        us.nombre AS nombre_responsable, us.correo AS correo_responsable
 FROM sensores s

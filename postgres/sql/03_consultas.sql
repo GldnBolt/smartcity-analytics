@@ -192,16 +192,16 @@ LEFT JOIN ubicaciones u ON u.id_ubicacion = p.id_ubicacion
 LEFT JOIN distritos d ON d.id = u.id_distrito
 ORDER BY r.codigo_linea, rp.sentido, rp.secuencia;
 
--- Q17. Promedios diarios por encima de umbrales superiores configurados.
--- No interpreta umbrales horarios, limites inferiores ni normativa legal.
+-- Q17. Promedios diarios por encima de los umbrales de periodo diario.
+-- Los umbrales horarios (los usa MongoDB) no se comparan con promedios diarios.
 SELECT s.codigo AS sensor, v.codigo AS variable, v.unidad,
-       m.fecha, m.promedio, t.advertencia, t.critico,
+       m.fecha, m.promedio, t.advertencia, t.critico, t.referencia,
        CASE WHEN m.promedio >= t.critico THEN 'critico'
             ELSE 'advertencia' END AS nivel
 FROM mediciones_diarias m
 JOIN sensores s ON s.id_sensor = m.id_sensor
 JOIN variables v ON v.id = m.id_variable
-JOIN umbrales t ON t.id_variable = m.id_variable
+JOIN umbrales t ON t.id_variable = m.id_variable AND t.periodo = 'diario'
 WHERE m.fecha >= DATE '2024-01-01' AND m.fecha < DATE '2026-01-01'
   AND (m.promedio >= t.advertencia OR m.promedio >= t.critico)
 ORDER BY m.fecha DESC, s.codigo, v.id;
@@ -258,4 +258,4 @@ WHERE id_ruta = (SELECT MIN(id) FROM rutas)
   AND fecha >= DATE '2025-01-01' AND fecha < DATE '2025-02-01'
 ORDER BY fecha, hora;
 
--- La comparacion fisica SIN indice / CON indice esta en 03_comparacion_indices.sql.
+-- La comparacion fisica SIN indice / CON indice esta en 04_comparacion_indices.sql.
