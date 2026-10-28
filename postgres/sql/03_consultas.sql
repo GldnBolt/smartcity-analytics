@@ -1,7 +1,7 @@
 -- SmartCity Madrid | PostgreSQL 16+
--- Ejecutar despues de 01_esquema.sql y de la carga de datos.
+-- Ejecutar despues de 01_esquema.sql y 02_carga.sql.
 -- Este archivo solo consulta. Vistas y funciones se crean en 01_esquema.sql.
--- Antes de consultar la vista materializada, actualizarla tras la carga:
+-- 02_carga.sql actualiza la vista materializada; tras otra carga, actualizarla con:
 -- REFRESH MATERIALIZED VIEW public.mv_demanda_ruta_mensual;
 -- Los periodos de ejemplo son [2024-01-01, 2026-01-01), salvo donde se indica.
 -- En la interfaz, reemplazar los parametros por parametros del driver SQL.

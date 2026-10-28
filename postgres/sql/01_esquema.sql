@@ -18,6 +18,8 @@ DROP TABLE IF EXISTS mediciones_diarias, demanda_ruta, ruta_parada, paradas,
     tipos_sensor, rutas, usuarios, ubicaciones, distritos, categorias_sensor;
 DROP FUNCTION IF EXISTS validar_tipo_medicion();
 DROP FUNCTION IF EXISTS proteger_tipo_con_mediciones();
+-- staging solo contiene tablas de paso de este proyecto.
+DROP SCHEMA IF EXISTS staging CASCADE;
 
 CREATE TABLE categorias_sensor (
     id_categoria BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -311,5 +313,51 @@ WITH DATA;
 CREATE UNIQUE INDEX ux_mv_demanda_ruta_mes ON mv_demanda_ruta_mensual(id_ruta, mes);
 -- Tras cada carga: REFRESH MATERIALIZED VIEW public.mv_demanda_ruta_mensual;
 -- ANALYZE public.mediciones_diarias; ANALYZE public.demanda_ruta;
+
+-- Area de staging (ELT). El extractor de Python copia aqui las filas leidas de
+-- los archivos crudos (ZIP, TopoJSON, CSV) sin transformarlas, salvo la
+-- geometria: barrio de cada punto y coordenadas UTM convertidas. 02_carga.sql
+-- las transforma y carga en el modelo con DML y al terminar vacia staging.
+-- UNLOGGED: son datos de paso que se pueden regenerar, no necesitan WAL.
+CREATE SCHEMA staging;
+
+-- Barrios del geoportal; los distritos se derivan de aqui.
+CREATE UNLOGGED TABLE staging.barrios (
+    codigo TEXT, nombre TEXT, cod_distrito INTEGER, distrito TEXT,
+    latitud NUMERIC(9,6), longitud NUMERIC(9,6)
+);
+-- Sensores seleccionados de cada red; red identifica al organismo responsable.
+CREATE UNLOGGED TABLE staging.sensores (
+    codigo TEXT, nombre TEXT, tipo_sensor TEXT, red TEXT, fecha_instalacion DATE,
+    estado TEXT, cod_barrio TEXT, latitud NUMERIC(9,6), longitud NUMERIC(9,6),
+    fuente_datos TEXT
+);
+-- Historial de lineas de la EMT, tal como se publica (una fila por version).
+CREATE UNLOGGED TABLE staging.lineas (
+    linea TEXT, fecha_ini TEXT, fecha_fin TEXT, origen TEXT, destino TEXT
+);
+-- routes.txt del GTFS: nombre comercial de cada linea.
+CREATE UNLOGGED TABLE staging.gtfs_rutas (route_id TEXT, nombre TEXT);
+-- Paradas por linea, sentido y secuencia, de todas las versiones publicadas.
+-- n conserva el orden del archivo para resolver duplicados de forma estable.
+CREATE UNLOGGED TABLE staging.recorridos (
+    n BIGINT GENERATED ALWAYS AS IDENTITY,
+    linea TEXT, fecha_ini TEXT, fecha_fin TEXT, parada TEXT,
+    sentido INTEGER, secuencia INTEGER
+);
+-- Una fila por parada: coordenadas WGS84 (GTFS o UTM convertidas) y barrio.
+CREATE UNLOGGED TABLE staging.paradas (
+    codigo TEXT, nombre TEXT, lat NUMERIC(9,6), lon NUMERIC(9,6),
+    cod_barrio TEXT, desde_utm BOOLEAN
+);
+-- Historial de la flota (una fila por version de cada autobus).
+CREATE UNLOGGED TABLE staging.flota (
+    vehiculo TEXT, fecha_ini TEXT, fecha_fin TEXT, marca TEXT, modelo TEXT,
+    combustible TEXT, capacidad TEXT
+);
+-- Viajeros por linea, fecha y franja (Hnn / Mnn) tal como los publica la EMT.
+CREATE UNLOGGED TABLE staging.demanda (
+    fecha DATE, linea TEXT, franja TEXT, viajeros BIGINT
+);
 
 COMMIT;
